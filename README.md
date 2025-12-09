@@ -9,7 +9,7 @@ Anyone who has worked in bioinformatics knows the familiar rhythm: biologists co
 
 ### Within each script
 1. dotplot_deg - this helps you create a dotplot for the top 25 degs for each comparison for each defined cluster. So it can help you compare the DEGs between tissue1 vs tissue2 within cluster Cd4 for example
-2. 
+2. top_clonotypes_alluvial - this helps you fined the shared clonotypes across different clusters/conditions and find the ones shared, along with that also "bold" the sequences that you are interested. Like I was interested in GP33-related sequences
 
 ### What You Can Do With This Toolkit
 	•	Rapid DEG exploration for each cluster between tissue/condition groups
