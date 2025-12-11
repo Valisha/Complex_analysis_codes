@@ -8,7 +8,8 @@ plot_top_clonotypes_alluvial <- function(
     gp33            = FALSE,
     gp_tra_seq      = NULL,
     gp_trb_seq      = NULL,
-    title           = NULL
+    title           = NULL,
+    condition_palette = condition_palette
 ) {
   library(dplyr)
   library(ggplot2)
@@ -162,12 +163,6 @@ plot_top_clonotypes_alluvial <- function(
       axis.text.x  = element_text(size = 11),
       axis.title.y = element_text(size = 12)
     )
-  condition_palette <- c(
-    "Parenchyma"     = "#4E79A7",
-    "Midline"        = "#A0CBE8",
-    "Meninges"       = "#F28E2B",
-    "Choroid Plexus" = "#E15759"
-  )
   venn_list <- lapply(origin_levels, function(org) {
     meta2 %>%
       filter(.data[[origin_col]] == org) %>%
@@ -203,7 +198,6 @@ plot_top_clonotypes_alluvial <- function(
     venn_data = venn_list
   ))
 }
-
 
 
 
