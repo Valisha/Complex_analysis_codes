@@ -15,7 +15,6 @@ suppressPackageStartupMessages({
   library(patchwork)
   library(tibble)
 })
-
 # ----------------------------
 # 1. LOAD OBJECTS
 # ----------------------------
