@@ -1,0 +1,242 @@
+---
+title: "Example QC on each sample using custom threshold based on tapering of the violin plots"
+output: html_notebook
+---
+
+#### Test density function
+```{r}
+
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(stringr)
+  library(purrr)
+  library(dplyr)
+  library(ggplot2)
+  library(patchwork)
+  library(tibble)
+})
+
+# ----------------------------
+# 1. LOAD OBJECTS
+# ----------------------------
+source("~/Library/CloudStorage/Box-Box/Kaech Lab Folder/Valisha/CORE SCRIPTS/HELPER SCRIPTS/Read_perSampleOuts.R")
+
+base_dir <- "/path/to/per_sample_outs"
+all_sample_dirs <- list.dirs(base_dir, recursive = FALSE, full.names = TRUE)
+
+objs <- list()
+
+for (sample in all_sample_dirs) {
+  file_path <- file.path(sample, "count", "sample_raw_feature_bc_matrix")
+  message(file_path)
+
+  sample_id <- basename(sample)
+  message(sample_id)
+
+  counts <- read_10x_any(file_path)
+
+  obj <- CreateSeuratObject(
+    counts = counts,
+    project = sample_id,
+    min.cells = 3,
+    min.features = 200
+  )
+
+  obj$sample <- sample_id
+
+  if (any(grepl("^MT-", rownames(obj)))) {
+    obj[["percent.mt"]] <- PercentageFeatureSet(obj, pattern = "^MT-")
+  } else if (any(grepl("^mt-", rownames(obj)))) {
+    obj[["percent.mt"]] <- PercentageFeatureSet(obj, pattern = "^mt-")
+  } else {
+    obj[["percent.mt"]] <- 0
+  }
+
+  colnames(obj) <- paste0(obj$sample[1], "_", colnames(obj))
+  objs[[obj$sample[1]]] <- obj
+}
+
+stopifnot(length(objs) > 0)
+message(sprintf("Loaded %d samples", length(objs)))
+
+```
+
+### Find the taper areas
+```{r}
+
+# ----------------------------
+# 2. TAPER / KNEE FUNCTIONS
+# ----------------------------
+
+get_taper_threshold <- function(x, adjust = 1, frac_peak = 0.10, min_after_mode = 10) {
+  x <- x[is.finite(x)]
+  if (length(unique(x)) < 10) {
+    return(list(
+      threshold = NA_real_,
+      mode = NA_real_,
+      density = NULL
+    ))
+  }
+
+  d <- density(x, adjust = adjust, na.rm = TRUE)
+
+  i_mode <- which.max(d$y)
+  x_mode <- d$x[i_mode]
+  y_mode <- d$y[i_mode]
+
+  xr <- d$x[i_mode:length(d$x)]
+  yr <- d$y[i_mode:length(d$y)]
+
+  idx <- which(yr <= frac_peak * y_mode)
+  idx <- idx[idx > min_after_mode]
+
+  threshold <- if (length(idx) > 0) xr[idx[1]] else max(x, na.rm = TRUE)
+
+  list(
+    threshold = as.numeric(threshold),
+    mode = as.numeric(x_mode),
+    density = d
+  )
+}
+
+make_qc_thresholds_table <- function(
+  objs,
+  nCount_low = 200,
+  nFeature_low = 200,
+  mt_high = 3,
+  adjust = 1,
+  frac_peak = 0.05 ### lower the value more linient is the QC
+) {
+  bind_rows(lapply(names(objs), function(s) {
+    obj <- objs[[s]]
+
+    nc <- get_taper_threshold(obj$nCount_RNA, adjust = adjust, frac_peak = frac_peak)
+    nf <- get_taper_threshold(obj$nFeature_RNA, adjust = adjust, frac_peak = frac_peak)
+
+    tibble(
+      sample = s,
+      nCount_low = nCount_low,
+      nCount_high = round(nc$threshold),
+      nFeature_low = nFeature_low,
+      nFeature_high = round(nf$threshold),
+      mt_high = mt_high,
+      nCount_mode = round(nc$mode),
+      nFeature_mode = round(nf$mode)
+    )
+  }))
+}
+
+# ----------------------------
+# 3. BUILD QC THRESHOLDS TABLE
+# ----------------------------
+
+qc_thresholds <- make_qc_thresholds_table(
+  objs = objs,
+  nCount_low = 200,
+  nFeature_low = 200,
+  mt_high = 3,
+  adjust = 1,
+  frac_peak = 0.08
+)
+
+print(qc_thresholds)
+# write.csv(qc_thresholds, "qc_thresholds_taper_based.csv", row.names = FALSE)
+
+```
+
+### Plot with threshold lines
+```{r}
+
+# ----------------------------
+# 4. PLOTTING FUNCTION
+# ----------------------------
+
+plot_qc_with_custom_thresholds <- function(obj, sample_name, thr_row) {
+  p1 <- VlnPlot(obj, features = "nCount_RNA", pt.size = 0, layer = "counts") +
+    geom_hline(yintercept = thr_row$nCount_low, linetype = "dashed", color = "black") +
+    geom_hline(yintercept = thr_row$nCount_high, linetype = "dashed", color = "red") +
+    ggtitle(sample_name) +
+    NoLegend()
+
+  p2 <- VlnPlot(obj, features = "nFeature_RNA", pt.size = 0, layer = "counts") +
+    geom_hline(yintercept = thr_row$nFeature_low, linetype = "dashed", color = "black") +
+    geom_hline(yintercept = thr_row$nFeature_high, linetype = "dashed", color = "red") +
+    ggtitle("nFeature") +
+    NoLegend()
+
+  p3 <- VlnPlot(obj, features = "percent.mt", pt.size = 0, layer = "counts") +
+    geom_hline(yintercept = thr_row$mt_high, linetype = "dashed", color = "red") +
+    ggtitle("percent.mt") +
+    NoLegend()
+
+  p1 | p2 | p3
+}
+
+for (s in names(objs)) {
+  thr_row <- qc_thresholds %>% filter(sample == s)
+  print(plot_qc_with_custom_thresholds(objs[[s]], s, thr_row))
+}
+
+```
+
+### Apply the custom threshold
+```{r}
+
+# ----------------------------
+# 6. APPLY QC
+# ----------------------------
+
+objs_qc <- list()
+qc_summary <- bind_rows(lapply(names(objs), function(s) {
+  obj <- objs[[s]]
+  thr <- qc_thresholds %>% filter(sample == s)
+
+  obj_filt <- subset(
+    obj,
+    subset =
+      nCount_RNA >= thr$nCount_low &
+      nCount_RNA <= thr$nCount_high &
+      nFeature_RNA >= thr$nFeature_low &
+      nFeature_RNA <= thr$nFeature_high &
+      percent.mt <= thr$mt_high
+  )
+
+  objs_qc[[s]] <<- obj_filt
+
+  tibble(
+    sample = s,
+    cells_before = ncol(obj),
+    cells_after = ncol(obj_filt),
+    removed = ncol(obj) - ncol(obj_filt)
+  )
+}))
+
+print(qc_summary)
+write.csv(qc_summary, "qc_summary_taper_based.csv", row.names = FALSE)
+
+```
+
+### Replot after QC
+```{r}
+
+# ----------------------------
+# 7. POST-QC PLOTS
+# ----------------------------
+
+# pdf("QC_post_filter_with_taper_thresholds.pdf", width = 12, height = 4)
+
+for (s in names(objs_qc)) {
+  thr_row <- qc_thresholds %>% filter(sample == s)
+  print(plot_qc_with_custom_thresholds(objs_qc[[s]], paste0(s, "_postQC"), thr_row))
+}
+
+# dev.off()
+
+```
+
+
+
+
+
+
+
